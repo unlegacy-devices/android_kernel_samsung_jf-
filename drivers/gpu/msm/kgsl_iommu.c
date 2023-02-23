@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -681,8 +681,8 @@ static void kgsl_detach_pagetable_iommu_domain(struct kgsl_mmu *mmu)
 				iommu_detach_device(iommu_pt->domain,
 						iommu_unit->dev[j].dev);
 				iommu_unit->dev[j].attached = false;
-				KGSL_MEM_INFO(mmu->device, "iommu %p detached "
-					"from user dev of MMU: %p\n",
+				KGSL_MEM_INFO(mmu->device, "iommu %pK detached "
+					"from user dev of MMU: %pK\n",
 					iommu_pt->domain, mmu);
 			}
 		}
@@ -734,7 +734,7 @@ static int kgsl_attach_pagetable_iommu_domain(struct kgsl_mmu *mmu)
 				}
 				iommu_unit->dev[j].attached = true;
 				KGSL_MEM_INFO(mmu->device,
-				"iommu pt %p attached to dev %p, ctx_id %d\n",
+				"iommu pt %pK attached to dev %pK, ctx_id %d\n",
 				iommu_pt->domain, iommu_unit->dev[j].dev,
 				iommu_unit->dev[j].ctx_id);
 			}
@@ -1214,10 +1214,19 @@ static int kgsl_iommu_setup_regs(struct kgsl_mmu *mmu,
 
 	return 0;
 err:
+#if !defined(CONFIG_MSM_IOMMU) && defined(CONFIG_SEC_PRODUCT_8960)
+	for (i--; i >= 0; i--) {
+		kgsl_mmu_unmap(pt,
+				&(iommu->iommu_units[i].reg_map));
+		kgsl_mmu_put_gpuaddr(pt,
+				&(iommu->iommu_units[i].reg_map));
+	}
+
+#else
 	for (i--; i >= 0; i--)
 		kgsl_mmu_unmap(pt,
 				&(iommu->iommu_units[i].reg_map));
-
+#endif
 	return status;
 }
 
@@ -1235,11 +1244,25 @@ static void kgsl_iommu_cleanup_regs(struct kgsl_mmu *mmu,
 {
 	struct kgsl_iommu *iommu = mmu->priv;
 	int i;
+#if !defined(CONFIG_MSM_IOMMU) && defined(CONFIG_SEC_PRODUCT_8960)
+	for (i = 0; i < iommu->unit_count; i++){
+		kgsl_mmu_unmap(pt, &(iommu->iommu_units[i].reg_map));
+		kgsl_mmu_put_gpuaddr(pt,
+				&(iommu->iommu_units[i].reg_map));
+	}
+
+	if (iommu->sync_lock_desc.gpuaddr) {
+		kgsl_mmu_unmap(pt, &iommu->sync_lock_desc);
+		kgsl_mmu_put_gpuaddr(pt,
+				&iommu->sync_lock_desc);
+	}
+#else
 	for (i = 0; i < iommu->unit_count; i++)
 		kgsl_mmu_unmap(pt, &(iommu->iommu_units[i].reg_map));
 
 	if (iommu->sync_lock_desc.gpuaddr)
 		kgsl_mmu_unmap(pt, &iommu->sync_lock_desc);
+#endif
 }
 
 
@@ -1522,7 +1545,12 @@ static int kgsl_iommu_start(struct kgsl_mmu *mmu)
 	 * changing pagetables we can use this lsb value of the pagetable w/o
 	 * having to read it again
 	 */
+
+#if !defined(CONFIG_MSM_IOMMU) && defined(CONFIG_SEC_PRODUCT_8960)
+
+#else
 	msm_iommu_lock();
+#endif
 	for (i = 0; i < iommu->unit_count; i++) {
 		struct kgsl_iommu_unit *iommu_unit = &iommu->iommu_units[i];
 		for (j = 0; j < iommu_unit->dev_count; j++) {
@@ -1534,8 +1562,11 @@ static int kgsl_iommu_start(struct kgsl_mmu *mmu)
 		}
 	}
 	kgsl_iommu_lock_rb_in_tlb(mmu);
-	msm_iommu_unlock();
+#if !defined(CONFIG_MSM_IOMMU) && defined(CONFIG_SEC_PRODUCT_8960)
 
+#else
+	msm_iommu_unlock();
+#endif
 	/* For complete CFF */
 	kgsl_cffdump_setmem(mmu->setstate_memory.gpuaddr +
 				KGSL_IOMMU_SETSTATE_NOP_OFFSET,
@@ -1652,12 +1683,20 @@ static void kgsl_iommu_stop(struct kgsl_mmu *mmu)
 				for (j = 0; j < iommu_unit->dev_count; j++) {
 					if (iommu_unit->dev[j].fault) {
 						kgsl_iommu_enable_clk(mmu, j);
+#if !defined(CONFIG_MSM_IOMMU) && defined(CONFIG_SEC_PRODUCT_8960)
+
+#else
 						msm_iommu_lock();
+#endif
 						KGSL_IOMMU_SET_CTX_REG(iommu,
 						iommu_unit,
 						iommu_unit->dev[j].ctx_id,
 						RESUME, 1);
+#if !defined(CONFIG_MSM_IOMMU) && defined(CONFIG_SEC_PRODUCT_8960)
+
+#else
 						msm_iommu_unlock();
+#endif
 						iommu_unit->dev[j].fault = 0;
 					}
 				}
@@ -1761,9 +1800,12 @@ static void kgsl_iommu_default_setstate(struct kgsl_mmu *mmu,
 	if (msm_soc_version_supports_iommu_v1())
 		kgsl_idle(mmu->device);
 
+#if !defined(CONFIG_MSM_IOMMU) && defined(CONFIG_SEC_PRODUCT_8960)
+
+#else
 	/* Acquire GPU-CPU sync Lock here */
 	msm_iommu_lock();
-
+#endif
 	if (flags & KGSL_MMUFLAGS_PTUPDATE) {
 		if (!msm_soc_version_supports_iommu_v1())
 			kgsl_idle(mmu->device);
@@ -1792,8 +1834,12 @@ static void kgsl_iommu_default_setstate(struct kgsl_mmu *mmu,
 		}
 	}
 
+#if !defined(CONFIG_MSM_IOMMU) && defined(CONFIG_SEC_PRODUCT_8960)
+
+#else
 	/* Release GPU-CPU sync Lock here */
 	msm_iommu_unlock();
+#endif
 
 	/* Disable smmu clock */
 	kgsl_iommu_disable_clk_on_ts(mmu, 0, false);

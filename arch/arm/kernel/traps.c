@@ -36,6 +36,9 @@
 #include <asm/system_misc.h>
 
 #include "signal.h"
+#ifdef CONFIG_SEC_DEBUG
+#include <mach/sec_debug.h>
+#endif
 
 #include <trace/events/exception.h>
 
@@ -305,6 +308,9 @@ void die(const char *str, struct pt_regs *regs, int err)
 	oops_enter();
 
 	raw_spin_lock_irq(&die_lock);
+#ifdef CONFIG_SEC_DEBUG_SCHED_LOG
+	secdbg_sched_msg("!!die!!");
+#endif
 	console_verbose();
 	bust_spinlocks(1);
 	if (!user_mode(regs))
@@ -312,6 +318,9 @@ void die(const char *str, struct pt_regs *regs, int err)
 	if (bug_type != BUG_TRAP_TYPE_NONE)
 		str = "Oops - BUG";
 	ret = __die(str, err, thread, regs);
+#ifdef CONFIG_SEC_DEBUG_SUBSYS
+	sec_debug_save_die_info(str, regs);
+#endif
 
 	if (regs && kexec_should_crash(thread->task))
 		crash_kexec(regs);
@@ -593,7 +602,7 @@ asmlinkage int arm_syscall(int no, struct pt_regs *regs)
 		return regs->ARM_r0;
 
 	case NR(set_tls):
-		thread->tp_value = regs->ARM_r0;
+		thread->tp_value[0] = regs->ARM_r0;
 		if (tls_emu)
 			return 0;
 		if (has_tls_reg) {
@@ -711,7 +720,7 @@ static int get_tp_trap(struct pt_regs *regs, unsigned int instr)
 	int reg = (instr >> 12) & 15;
 	if (reg == 15)
 		return 1;
-	regs->uregs[reg] = current_thread_info()->tp_value;
+	regs->uregs[reg] = current_thread_info()->tp_value[0];
 	regs->ARM_pc += 4;
 	return 0;
 }

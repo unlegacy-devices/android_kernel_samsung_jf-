@@ -142,7 +142,7 @@ static int msm_vpe_cfg_update(void *pinfo)
 	rot_flag = msm_camera_io_r(vpe_ctrl->vpebase +
 						VPE_OP_MODE_OFFSET) & 0xE00;
 	if (pinfo != NULL) {
-		D("%s: Crop info in2_w = %d, in2_h = %d "
+		D("%s: Crop info in2_w = %d, in2_h = %d "\
 			"out2_w = %d out2_h = %d\n",
 			__func__, pcrop->src_w, pcrop->src_h,
 			pcrop->dst_w, pcrop->dst_h);
@@ -505,7 +505,7 @@ DECLARE_TASKLET(vpe_tasklet, vpe_do_tasklet, 0);
 
 static irqreturn_t vpe_parse_irq(int irq_num, void *data)
 {
-	if(!vpe_ctrl || !vpe_ctrl->vpebase)
+	if (!vpe_ctrl || !vpe_ctrl->vpebase)
 		return IRQ_HANDLED;
 	vpe_ctrl->irq_status = msm_camera_io_r_mb(vpe_ctrl->vpebase +
 							VPE_INTR_STATUS_OFFSET);
@@ -552,11 +552,6 @@ int vpe_enable(uint32_t clk_rate, struct msm_cam_media_controller *mctl)
 		goto vpe_clk_failed;
 
 #ifdef CONFIG_MSM_IOMMU
-	if (mctl->domain == NULL) {
-		pr_err("%s: iommu domain not initialized\n", __func__);
-		rc = -EINVAL;
-		goto src_attach_failed;
-	}
 	rc = iommu_attach_device(mctl->domain, vpe_ctrl->iommu_ctx_src);
 	if (rc < 0) {
 		pr_err("%s: Device attach failed\n", __func__);
@@ -823,6 +818,19 @@ static int msm_vpe_process_vpe_cmd(struct msm_vpe_cfg_cmd *vpe_cmd,
 			break;
 		}
 
+		if ((zoom->pp_frame_cmd.src_frame.num_planes >
+			VIDEO_MAX_PLANES) ||
+			(zoom->pp_frame_cmd.dest_frame.num_planes >
+			VIDEO_MAX_PLANES)) {
+			pr_err("%s: num_planes out of range src %d dest %d",
+				__func__,
+				zoom->pp_frame_cmd.src_frame.num_planes,
+				zoom->pp_frame_cmd.dest_frame.num_planes);
+			kfree(zoom);
+			rc = -EINVAL;
+			break;
+		}
+
 		zoom->user_cmd = vpe_cmd->cmd_type;
 		zoom->p_mctl = v4l2_get_subdev_hostdata(&vpe_ctrl->subdev);
 		D("%s: cookie=0x%x,action=0x%x,path=0x%x",
@@ -899,7 +907,7 @@ static long msm_vpe_subdev_ioctl(struct v4l2_subdev *sd,
 	mctl = v4l2_get_subdev_hostdata(sd);
 	switch (cmd) {
 	case VIDIOC_MSM_VPE_INIT: {
-		rc = msm_vpe_subdev_init(sd);
+		msm_vpe_subdev_init(sd);
 		break;
 		}
 
@@ -1020,7 +1028,6 @@ static int msm_vpe_subdev_close(struct v4l2_subdev *sd,
 		msm_mctl_unmap_user_frame(&frame_info->dest_frame,
 			frame_info->p_mctl->client, mctl->domain_num);
 	}
-	vpe_ctrl->pp_frame_info = NULL;
 	/* Drain the payload queue. */
 	msm_queue_drain(&vpe_ctrl->eventData_q, list_eventdata);
 	atomic_dec(&vpe_ctrl->active);

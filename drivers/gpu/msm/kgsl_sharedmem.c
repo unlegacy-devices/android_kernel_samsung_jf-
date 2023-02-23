@@ -540,6 +540,10 @@ _kgsl_sharedmem_page_alloc(struct kgsl_memdesc *memdesc,
 	void *ptr;
 	unsigned int align;
 
+	size = PAGE_ALIGN(size);
+	if (size == 0 || size > UINT_MAX)
+		return -EINVAL;
+
 	align = (memdesc->flags & KGSL_MEMALIGN_MASK) >> KGSL_MEMALIGN_SHIFT;
 
 	page_size = (align >= ilog2(SZ_64K) && size >= SZ_64K)
@@ -562,6 +566,8 @@ _kgsl_sharedmem_page_alloc(struct kgsl_memdesc *memdesc,
 	memdesc->sg = kgsl_sg_alloc(memdesc->sglen_alloc);
 
 	if (memdesc->sg == NULL) {
+		KGSL_CORE_ERR("vmalloc(%d) failed\n",
+			sglen_alloc * sizeof(struct scatterlist));
 		ret = -ENOMEM;
 		goto done;
 	}
@@ -580,6 +586,8 @@ _kgsl_sharedmem_page_alloc(struct kgsl_memdesc *memdesc,
 		pages = kmalloc(PAGE_SIZE, GFP_KERNEL);
 
 	if (pages == NULL) {
+		KGSL_CORE_ERR("page table alloc (%d) failed\n",
+			sglen_alloc * sizeof(struct page *));
 		ret = -ENOMEM;
 		goto done;
 	}
@@ -642,6 +650,9 @@ _kgsl_sharedmem_page_alloc(struct kgsl_memdesc *memdesc,
 
 	memdesc->sglen = sglen;
 	memdesc->size = size;
+
+	if (sglen > 0)
+		sg_mark_end(&memdesc->sg[sglen - 1]);
 
 	/*
 	 * All memory that goes to the user has to be zeroed out before it gets

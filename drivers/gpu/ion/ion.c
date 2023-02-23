@@ -2,7 +2,7 @@
  * drivers/gpu/ion/ion.c
  *
  * Copyright (C) 2011 Google, Inc.
- * Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -17,6 +17,8 @@
 
 #include <linux/module.h>
 #include <linux/device.h>
+#include <linux/atomic.h>
+#include <linux/err.h>
 #include <linux/file.h>
 #include <linux/fs.h>
 #include <linux/anon_inodes.h>
@@ -336,6 +338,15 @@ static void ion_handle_get(struct ion_handle *handle)
 	kref_get(&handle->ref);
 }
 
+/* Must hold the client lock */
+static struct ion_handle* ion_handle_get_check_overflow(struct ion_handle *handle)
+{
+	if (atomic_read(&handle->ref.refcount) + 1 == 0)
+		return ERR_PTR(-EOVERFLOW);
+	ion_handle_get(handle);
+	return handle;
+}
+
 static int ion_handle_put(struct ion_handle *handle)
 {
 	return kref_put(&handle->ref, ion_handle_destroy);
@@ -458,7 +469,7 @@ struct ion_handle *ion_alloc(struct ion_client *client, size_t len,
 		return ERR_PTR(-ENODEV);
 
 	if (IS_ERR(buffer)) {
-		pr_debug("ION is unable to allocate 0x%x bytes (alignment: "
+		pr_info("ION is unable to allocate 0x%x bytes (alignment: "
 			 "0x%x) from heap(s) %sfor client %s with heap "
 			 "mask 0x%x\n",
 			len, align, dbg_str, client->name, client->heap_mask);
@@ -624,8 +635,23 @@ int ion_map_iommu(struct ion_client *client, struct ion_handle *handle,
 			unsigned long flags, unsigned long iommu_flags)
 {
 	struct ion_buffer *buffer;
-	struct ion_iommu_map *iommu_map;
+	struct ion_iommu_map *iommu_map = NULL;
 	int ret = 0;
+
+	if (client == NULL) {
+		pr_err("%s: client pointer is null!\n", __func__);
+		return -EINVAL;
+	}
+
+	if (handle == NULL) {
+		pr_err("%s: null handle pointer!\n", __func__);
+		return -EINVAL;
+	}
+
+	if (handle->buffer == NULL) {
+		pr_err("%s: null buffer pointer!\n", __func__);
+		return -EINVAL;
+	}
 
 	if (ION_IS_CACHED(flags)) {
 		pr_err("%s: Cannot map iommu as cached.\n", __func__);
@@ -688,6 +714,12 @@ int ion_map_iommu(struct ion_client *client, struct ion_handle *handle,
 			if (iommu_map->flags & ION_IOMMU_UNMAP_DELAYED)
 				kref_get(&iommu_map->ref);
 		}
+#if !defined(CONFIG_MSM_IOMMU) && defined(CONFIG_SEC_PRODUCT_8960)
+		else {
+            ret = -EINVAL;
+            goto out;
+        }
+#endif
 	} else {
 		if (iommu_map->flags != iommu_flags) {
 			pr_err("%s: handle %p is already mapped with iommu flags %lx, trying to map with flags %lx\n",
@@ -731,6 +763,21 @@ void ion_unmap_iommu(struct ion_client *client, struct ion_handle *handle,
 {
 	struct ion_iommu_map *iommu_map;
 	struct ion_buffer *buffer;
+
+	if (client == NULL) {
+		pr_err("%s: null client pointer!\n", __func__);
+		return;
+	}
+
+	if (handle == NULL) {
+		pr_err("%s: null handle pointer!\n", __func__);
+		return;
+	}
+
+	if (handle->buffer == NULL) {
+		pr_err("%s: null buffer pointer!\n", __func__);
+		return;
+	}
 
 	mutex_lock(&client->lock);
 	buffer = handle->buffer;
@@ -856,7 +903,7 @@ static int ion_debug_client_show(struct seq_file *s, void *unused)
 						     node);
 		enum ion_heap_type type = handle->buffer->heap->type;
 
-		seq_printf(s, "%16.16s: %16x : %16d : %12p",
+		seq_printf(s, "%16.16s: %16x : %16d : %12pK",
 				handle->buffer->heap->name,
 				handle->buffer->size,
 				atomic_read(&handle->ref.refcount),
@@ -1285,7 +1332,7 @@ struct ion_handle *ion_import_dma_buf(struct ion_client *client, int fd)
 	/* if a handle exists for this buffer just take a reference to it */
 	handle = ion_handle_lookup(client, buffer);
 	if (!IS_ERR_OR_NULL(handle)) {
-		ion_handle_get(handle);
+		handle = ion_handle_get_check_overflow(handle);
 		goto end;
 	}
 	handle = ion_handle_create(client, buffer);
