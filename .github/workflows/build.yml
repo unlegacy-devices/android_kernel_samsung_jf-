@@ -24,7 +24,7 @@ jobs:
       run: |
         export KBUILD_BUILD_USER=lifehackerhansol
         export KBUILD_BUILD_HOST=lifehackerhansol-android
-        make -j22 ARCH=arm VARIANT_DEFCONFIG=jf_eur_defconfig lineageos_jf_defconfig
+        make -j22 ARCH=arm VARIANT_DEFCONFIG=jf_eur_defconfig jf_defconfig
         make -j128
     - name: Moving Output # CI only
       run: |
